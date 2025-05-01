@@ -1,0 +1,4 @@
+
+DROP TABLE IF EXISTS measurements;
+
+DROP DATABASE IF EXISTS solar;
