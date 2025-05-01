@@ -2,14 +2,14 @@ name: Backend Image Build & Publish
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "develop"]
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   build:
-    name: Build Nix targets
+    name: Build and Push
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -19,31 +19,34 @@ jobs:
       - uses: cachix/install-nix-action@v20
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-      - name: Fix Nix Store Permissions
-        run: |
-          sudo mkdir -p /nix
-          sudo chown -R runner:runner /nix
-      - name: Cache Nix Store
-        uses: actions/cache@v3
-        with:
-          path: |
-            /nix/store
-            /nix/var/nix/db
-            /nix/var/nix/gcroots
-            /nix/var/nix/profiles
-            /nix/var/nix/temproots
-          key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: |
-            nix-${{ runner.os }}-
-      - name: Build default package
+      
+      - name: Build package
         run: nix build ".#image"
+      
       - id: repository
         name: Generate Registry String
         uses: vishalmamidi/lowercase-action@v1
         with:
           string: ${{ env.REGISTRY}}/${{ github.repository }}
-      - name: Pushing Image to GCR
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Load and Push Image to GHCR
         run: |
-          export SUFFIX=$([ ${{ github.ref }} = "refs/head/develop" ] && echo "-dev")
-          echo Pushing to ${{ steps.repository.outputs.lowercase }}:develop
-          skopeo copy --dest-creds ${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} docker-archive:./result docker://${{ steps.repository.outputs.lowercase }}:develop
+          IMAGE_TAG=$([ "${{ github.ref }}" = "refs/heads/develop" ] && echo "develop" || echo "latest")
+          # Load the image from Nix build result
+          docker load < ./result
+          # Get the image ID of the loaded image
+          IMAGE_ID=$(docker images --format "{{.ID}}" | head -n 1)
+          # Tag the image with the appropriate name
+          docker tag $IMAGE_ID ${{ steps.repository.outputs.lowercase }}:$IMAGE_TAG
+          # Push the image
+          docker push ${{ steps.repository.outputs.lowercase }}:$IMAGE_TAG

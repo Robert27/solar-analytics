@@ -35,9 +35,8 @@
         runtimeDependencies = with pkgs; [
           openssl
         ];
-      in
-      {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
+        
+        app = pkgs.rustPlatform.buildRustPackage {
           pname = "solar_analytics";
           version = "0.1.0";
           src = ./.;
@@ -54,9 +53,38 @@
           # Set default logging level
           RUST_LOG = "info";
         };
+
+        # Create a Docker image
+        dockerImage = pkgs.dockerTools.buildLayeredImage {
+          name = "solar_analytics";
+          tag = "latest";
+          
+          contents = [
+            app
+            pkgs.cacert # SSL certificates
+            pkgs.bash
+          ] ++ runtimeDependencies;
+          
+          config = {
+            Cmd = [ "${app}/bin/solar_analytics" ];
+            Env = [
+              "RUST_BACKTRACE=1"
+              "RUST_LOG=info"
+            ];
+            ExposedPorts = {
+              "8080/tcp" = {};
+            };
+          };
+        };
+      in
+      {
+        packages = {
+          default = app;
+          image = dockerImage;
+        };
         
         apps.default = flake-utils.lib.mkApp {
-          drv = self.packages.${system}.default;
+          drv = app;
         };
         
         devShells.default = pkgs.mkShell {
