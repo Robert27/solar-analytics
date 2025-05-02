@@ -20,62 +20,69 @@
           config.allowUnfree = true; # If any dependencies require this
         };
 
+        # Define supported target systems
+        supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+
         # Build the Rust application
-        solarAnalyticsApp = pkgs.rustPlatform.buildRustPackage {
-          pname = "solar_analytics";
-          # Consider fetching version from Cargo.toml dynamically if needed
-          version = "0.1.0";
+        buildApp = targetSystem: 
+          let
+            targetPkgs = import nixpkgs {
+              system = system;
+              overlays = [ (import rust-overlay) ];
+              crossSystem = if targetSystem != system then { config = targetSystem; } else null;
+            };
+          in
+          targetPkgs.rustPlatform.buildRustPackage {
+            pname = "solar_analytics";
+            version = "0.1.0";
+            src = pkgs.lib.cleanSource ./.;
+            cargoLock = { lockFile = ./Cargo.lock; };
 
-          src = pkgs.lib.cleanSource ./.;
+            nativeBuildInputs = with targetPkgs; [ pkg-config ];
+            buildInputs = with targetPkgs; [ openssl ];
 
-          cargoLock = {
-            lockFile = ./Cargo.lock;
+            meta = with targetPkgs.lib; {
+              description = "Solar Analytics Data Fetcher";
+              license = licenses.mit;
+            };
           };
 
-          # Ensure build dependencies match those previously installed via apt-get
-          nativeBuildInputs = with pkgs; [
-            pkg-config
-          ];
-          buildInputs = with pkgs; [
-            openssl # Corresponds to libssl-dev
-          ];
+        # Build for the host system
+        solarAnalyticsApp = buildApp system;
 
-          # If your application needs runtime dependencies beyond libc/libgcc,
-          # they might need to be handled differently, potentially by adjusting the final Docker image.
-
-          meta = with pkgs.lib; {
-            description = "Solar Analytics Data Fetcher";
-            # homepage = "https://github.com/your-repo/solar_analytics";
-            license = licenses.mit; # Update if different
-            # maintainers = with maintainers; [ your-github-handle ];
-          };
+        # Build for all supported systems
+        multiArchBuild = pkgs.symlinkJoin {
+          name = "solar_analytics-multiarch";
+          paths = map buildApp supportedSystems;
         };
 
       in
       {
-        packages.default = solarAnalyticsApp;
+        packages = {
+          default = solarAnalyticsApp;
+          multiarch = multiArchBuild;
+        };
 
         # Package for the Docker image build
         packages.dockerImage = pkgs.dockerTools.buildImage {
           name = "solar_analytics"; # Image name used internally and when loaded
           tag = "flake"; # Tag used internally and when loaded
+          
+          # Build a multi-platform image
+          architecture = "all";
 
           # Base image contents (minimal)
           contents = [ 
             pkgs.cacert # For HTTPS calls (ca-certificates)
             pkgs.openssl # Runtime dependency (libssl3)
-            solarAnalyticsApp # The compiled application binary
+            multiArchBuild # The compiled application binary for multiple architectures
           ];
 
           config = {
-            # Match runtime environment from original Dockerfile
-            WorkingDir = "/app"; # Optional: Set a working directory
-            User = "appuser"; # Run as non-root user
-            Env = [ 
-              "RUST_LOG=info" 
-              # Other ENV vars should be set via docker run or docker-compose
-            ]; 
-            Cmd = [ "${solarAnalyticsApp}/bin/solar_analytics" ]; # Command to run
+            WorkingDir = "/app";
+            User = "appuser";
+            Env = [ "RUST_LOG=info" ];
+            Cmd = [ "/bin/solar_analytics" ];
           };
 
           # Create the non-root user
@@ -90,15 +97,9 @@
 
         # Optional: Development shell
         devShells.default = pkgs.mkShell {
-           nativeBuildInputs = with pkgs; [
-            pkg-config
-          ];
-          buildInputs = with pkgs; [
-            rustChannel
-            rust-analyzer
-            openssl # Runtime dependency for local testing
-          ];
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+           nativeBuildInputs = with pkgs; [ pkg-config ];
+           buildInputs = with pkgs; [ rustChannel rust-analyzer openssl ];
+           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };
       });
 }
