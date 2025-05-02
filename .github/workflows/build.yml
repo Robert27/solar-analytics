@@ -1,52 +1,48 @@
-name: Backend Image Build & Publish
+name: Create and publish a Docker image
 
 on:
   push:
-    branches: ["main", "develop"]
+    branches: ['main', 'develop']
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
-    name: Build and Push
-    runs-on: ubuntu-22.04
+  build-and-push-image:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v3
-      - uses: cachix/install-nix-action@v20
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-      
-      - name: Build package
-        run: nix build ".#image"
-      
-      - id: repository
-        name: Generate Registry String
-        uses: vishalmamidi/lowercase-action@v1
-        with:
-          string: ${{ env.REGISTRY}}/${{ github.repository }}
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Log in to the Container registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
       
-      - name: Load and Push Image to GHCR
-        run: |
-          IMAGE_TAG=$([ "${{ github.ref }}" = "refs/heads/develop" ] && echo "develop" || echo "latest")
-          # Load the image from Nix build result
-          docker load < ./result
-          # Get the image ID of the loaded image
-          IMAGE_ID=$(docker images --format "{{.ID}}" | head -n 1)
-          # Tag the image with the appropriate name
-          docker tag $IMAGE_ID ${{ steps.repository.outputs.lowercase }}:$IMAGE_TAG
-          # Push the image
-          docker push ${{ steps.repository.outputs.lowercase }}:$IMAGE_TAG
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      
