@@ -1,8 +1,8 @@
-name: Create and publish a Docker image
+name: Build and publish with Nix
 
 on:
   push:
-    branches: ['main', 'develop']
+    branches: ['main', 'nix']
 
 env:
   REGISTRY: ghcr.io
@@ -14,35 +14,53 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
       - name: Log in to the Container registry
-        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-      
+
+      - name: Build Docker image with Nix
+        run: nix build .#dockerImage --print-out-paths
+
+      - name: Load Nix-built image into Docker
+        run: docker load < $(nix build .#dockerImage --print-out-paths)
+
+      - name: Set image tag
+        id: set_tag
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SANITIZED_BRANCH_NAME=$(echo $BRANCH_NAME | sed 's/[^a-zA-Z0-9]/-/g')
+          TAG=${SANITIZED_BRANCH_NAME:-latest}
+          if [ "$BRANCH_NAME" == "main" ]; then
+            TAG="main,latest"
+          fi
+          echo "TAGS=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Tag image
+        run: |
+          IMAGE_ID=$(docker images solar_analytics:flake --format "{{.ID}}")
+          IFS=',' read -ra TAGS <<< "${{ steps.set_tag.outputs.TAGS }}"
+          for tag in "${TAGS[@]}"; do
+            echo "Tagging ${IMAGE_ID} as ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag"
+            docker tag $IMAGE_ID ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag
+          done
+
+      - name: Push image
+        run: |
+          IFS=',' read -ra TAGS <<< "${{ steps.set_tag.outputs.TAGS }}"
+          for tag in "${TAGS[@]}"; do
+            echo "Pushing ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag"
+            docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$tag
+          done
+
