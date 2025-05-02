@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let db_client = create_clickhouse_client(clickhouse_url, username, password, database);
 
-    log::info!("Starting solar data collection at strict :05 and :35 second marks");
+    log::info!("Starting solar data collection at strict :10 and :40 second marks");
 
     let mut next_collection = calculate_next_collection_time();
     log::info!("First collection scheduled at: {}", next_collection);

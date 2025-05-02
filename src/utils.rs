@@ -4,12 +4,12 @@ pub fn calculate_next_collection_time() -> DateTime<Local> {
     let now = Local::now();
     let current_second = now.second();
 
-    let next = if current_second < 35 && current_second >= 5 {
-        now + ChronoDuration::seconds(35 - current_second as i64)
-    } else if current_second < 5 {
-        now + ChronoDuration::seconds(5 - current_second as i64)
+    let next = if current_second < 40 && current_second >= 10 {
+        now + ChronoDuration::seconds(40 - current_second as i64)
+    } else if current_second < 10 {
+        now + ChronoDuration::seconds(10 - current_second as i64)
     } else {
-        now + ChronoDuration::seconds(65 - current_second as i64)
+        now + ChronoDuration::seconds(70 - current_second as i64)
     };
 
     next.with_nanosecond(0).unwrap()
