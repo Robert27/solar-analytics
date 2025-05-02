@@ -14,7 +14,6 @@ pub async fn fetch_solar_data(client: &Client, url: &str) -> Result<(i64, i64), 
         .await?;
 
     let text = response.text().await?;
-    log::info!("Raw Response: {}", text);
 
     let parsed: SolarLogRoot = serde_json::from_str(&text)?;
 
