@@ -1,4 +1,4 @@
-name: Build and publish with Nix
+name: Build and publish with Docker buildx
 
 on:
   push:
@@ -6,7 +6,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # IMAGE_NAME is derived dynamically and lowercased below
+  # GitHub repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push-image:
@@ -22,11 +23,20 @@ jobs:
         uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-          extra_nix_config: |
-            extra-platforms = aarch64-linux
 
-      - name: Setup QEMU (for multi-arch builds)
+      - name: Build Dockerfile template
+        id: dockerfile
+        run: |
+          # Generate the Dockerfile template using Nix
+          nix build .#dockerfileTemplate --out-link dockerfile-template
+          cp $(readlink dockerfile-template) ./Dockerfile.multiarch
+          echo "DOCKERFILE_PATH=./Dockerfile.multiarch" >> $GITHUB_OUTPUT
+          
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
         
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -35,33 +45,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image with Nix for multi-arch
-        id: build_image
-        run: |
-          # Build for both x86_64 and ARM (aarch64)
-          image_path=$(nix build .#dockerImage --print-out-paths)
-          echo "image_path=${image_path}" >> $GITHUB_OUTPUT
-
-      - name: Load Nix-built image into Docker
-        id: load_image
-        run: |
-          loaded_image_id=$(docker load < ${{ steps.build_image.outputs.image_path }} | sed -n 's/^Loaded image ID: sha256:\([0-9a-f]*\).*$/\1/p')
-          # Sometimes 'docker load' outputs "Loaded image: <name>:<tag>"
-          if [ -z "$loaded_image_id" ]; then
-            loaded_image_name_tag=$(docker load < ${{ steps.build_image.outputs.image_path }} | sed -n 's/^Loaded image: \(.*\)$/\1/p')
-            # Use the name:tag reported by docker load if ID wasn't captured directly
-            echo "loaded_name_tag=${loaded_image_name_tag}" >> $GITHUB_OUTPUT
-          else
-             # If we got the ID, construct a temporary name:tag based on it for metadata action
-             echo "loaded_name_tag=localbuild:${loaded_image_id:0:12}" >> $GITHUB_OUTPUT
-             docker tag $loaded_image_id localbuild:${loaded_image_id:0:12}
-          fi
-
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }} # Action handles lowercasing
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
             latest=auto
           tags: |
@@ -70,21 +58,34 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Print tags
-        run: echo "${{ steps.meta.outputs.tags }}"
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
-      - name: Tag loaded image
+      # Prepare the source code for cross-compiling
+      - name: Build Rust binaries for multiple architectures
         run: |
-          SOURCE_IMAGE="${{ steps.load_image.outputs.loaded_name_tag }}"
-          echo "${{ steps.meta.outputs.tags }}" | sed 's/,/\n/g' | while read tag; do
-            echo "Tagging ${SOURCE_IMAGE} as ${tag}"
-            docker tag "${SOURCE_IMAGE}" "${tag}"
-          done
+          # Create directories for binaries
+          mkdir -p .buildx/x86_64 .buildx/aarch64
+          
+          # Build for x86_64
+          cargo build --release --target x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/release/solar_analytics .buildx/x86_64/
+          
+          # Build for aarch64 (ARM64)
+          cargo build --release --target aarch64-unknown-linux-gnu
+          cp target/aarch64-unknown-linux-gnu/release/solar_analytics .buildx/aarch64/
 
-      - name: Push image
-        run: |
-          echo "${{ steps.meta.outputs.tags }}" | sed 's/,/\n/g' | while read tag; do
-            echo "Pushing ${tag}"
-            docker push "${tag}"
-          done
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ steps.dockerfile.outputs.DOCKERFILE_PATH }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BINARY_PATH=.buildx
 

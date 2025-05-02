@@ -1,0 +1,37 @@
+FROM scratch
+
+# Add SSL certificates for HTTPS
+COPY --from=alpine:latest /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Add OpenSSL libraries
+COPY --from=alpine:latest /usr/lib/libssl.so* /usr/lib/
+COPY --from=alpine:latest /usr/lib/libcrypto.so* /usr/lib/
+COPY --from=alpine:latest /lib/ld-musl-*.so.1 /lib/
+
+# We need a shell for user creation
+COPY --from=alpine:latest /bin/sh /bin/sh
+COPY --from=alpine:latest /bin/mkdir /bin/mkdir
+COPY --from=alpine:latest /bin/addgroup /bin/addgroup
+COPY --from=alpine:latest /bin/adduser /bin/adduser
+
+# Create a non-root user
+RUN addgroup -S appuser && adduser -S -G appuser -h /app appuser && mkdir -p /app
+
+# Copy the application binary based on architecture
+COPY .buildx/x86_64/solar_analytics /bin/solar_analytics.x86_64
+COPY .buildx/aarch64/solar_analytics /bin/solar_analytics.aarch64
+
+# Use architecture detection script to select the right binary
+COPY --from=alpine:latest /bin/uname /bin/uname
+COPY --from=alpine:latest /bin/cp /bin/cp
+COPY --from=alpine:latest /bin/chmod /bin/chmod
+
+# Create a startup script to select the right binary based on architecture
+RUN echo '#!/bin/sh\nARCH=$(uname -m)\nif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then\n  cp /bin/solar_analytics.aarch64 /bin/solar_analytics.run\nelse\n  cp /bin/solar_analytics.x86_64 /bin/solar_analytics.run\nfi\nchmod +x /bin/solar_analytics.run\nexec /bin/solar_analytics.run "$@"' > /bin/entrypoint.sh && \
+    chmod +x /bin/entrypoint.sh
+
+WORKDIR /app
+USER appuser
+ENV RUST_LOG=info
+
+ENTRYPOINT ["/bin/entrypoint.sh"]

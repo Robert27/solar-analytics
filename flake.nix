@@ -10,96 +10,74 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        # Use a specific Rust version consistent with the previous Dockerfile if needed, or latest stable.
-        # Check Cargo.toml for the MSRV if specified.
-        rustChannel = pkgs.rust-bin.stable."latest".default; # Or specify a version like "1.85"
-
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
-          config.allowUnfree = true; # If any dependencies require this
+          config.allowUnfree = true;
+        };
+        
+        rustChannel = pkgs.rust-bin.stable."latest".default;
+
+        # Single architecture build for the host system
+        solarAnalyticsApp = pkgs.rustPlatform.buildRustPackage {
+          pname = "solar_analytics";
+          version = "0.1.0";
+          src = pkgs.lib.cleanSource ./.;
+          cargoLock = { lockFile = ./Cargo.lock; };
+
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+          buildInputs = with pkgs; [ openssl ];
+
+          meta = with pkgs.lib; {
+            description = "Solar Analytics Data Fetcher";
+            license = licenses.mit;
+          };
         };
 
-        # Define supported target systems
-        supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-
-        # Build the Rust application
-        buildApp = targetSystem: 
-          let
-            targetPkgs = import nixpkgs {
-              system = system;
-              overlays = [ (import rust-overlay) ];
-              crossSystem = if targetSystem != system then { config = targetSystem; } else null;
-            };
-          in
-          targetPkgs.rustPlatform.buildRustPackage {
-            pname = "solar_analytics";
-            version = "0.1.0";
-            src = pkgs.lib.cleanSource ./.;
-            cargoLock = { lockFile = ./Cargo.lock; };
-
-            nativeBuildInputs = with targetPkgs; [ pkg-config ];
-            buildInputs = with targetPkgs; [ openssl ];
-
-            meta = with targetPkgs.lib; {
-              description = "Solar Analytics Data Fetcher";
-              license = licenses.mit;
-            };
-          };
-
-        # Build for the host system
-        solarAnalyticsApp = buildApp system;
-
-        # Build for all supported systems
-        multiArchBuild = pkgs.symlinkJoin {
-          name = "solar_analytics-multiarch";
-          paths = map buildApp supportedSystems;
+        # Create a Dockerfile template that will be used by Docker buildx
+        dockerfileTemplate = pkgs.writeTextFile {
+          name = "Dockerfile.template";
+          text = ''
+            FROM scratch
+            
+            # Add SSL certificates for HTTPS
+            COPY --from=alpine:latest /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+            
+            # Add OpenSSL libraries - using a minimal base image approach
+            COPY --from=alpine:latest /usr/lib/libssl.so* /usr/lib/
+            COPY --from=alpine:latest /usr/lib/libcrypto.so* /usr/lib/
+            
+            # Create a non-root user
+            RUN addgroup -S appuser && adduser -S -G appuser -h /app appuser
+            
+            # Copy the application binary - this will be replaced with the arch-specific binary
+            COPY ./solar_analytics /bin/solar_analytics
+            
+            WORKDIR /app
+            USER appuser
+            ENV RUST_LOG=info
+            
+            CMD ["/bin/solar_analytics"]
+          '';
         };
 
       in
       {
         packages = {
           default = solarAnalyticsApp;
-          multiarch = multiArchBuild;
-        };
-
-        # Package for the Docker image build
-        packages.dockerImage = pkgs.dockerTools.buildImage {
-          name = "solar_analytics"; # Image name used internally and when loaded
-          tag = "flake"; # Tag used internally and when loaded
           
-          # Build a multi-platform image
-          architecture = "all";
-
-          # Base image contents (minimal)
-          contents = [ 
-            pkgs.cacert # For HTTPS calls (ca-certificates)
-            pkgs.openssl # Runtime dependency (libssl3)
-            multiArchBuild # The compiled application binary for multiple architectures
-          ];
-
-          config = {
-            WorkingDir = "/app";
-            User = "appuser";
-            Env = [ "RUST_LOG=info" ];
-            Cmd = [ "/bin/solar_analytics" ];
-          };
-
-          # Create the non-root user
-          runAsRoot = ''
-            ${pkgs.dockerTools.shadowSetup}
-            groupadd -r appuser
-            useradd -r -g appuser -d /app -m appuser 
-            mkdir -p /app
-            chown appuser:appuser /app
-          '';
+          # Export the compiled binary for the current platform
+          binary = solarAnalyticsApp;
+          
+          # Export the Dockerfile template
+          dockerfileTemplate = dockerfileTemplate;
         };
 
-        # Optional: Development shell
+        # Development shell
         devShells.default = pkgs.mkShell {
-           nativeBuildInputs = with pkgs; [ pkg-config ];
-           buildInputs = with pkgs; [ rustChannel rust-analyzer openssl ];
-           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+          buildInputs = with pkgs; [ rustChannel rust-analyzer openssl ];
+          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };
       });
 }
