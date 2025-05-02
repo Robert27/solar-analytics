@@ -1,0 +1,13 @@
+[phases.setup]
+nixPkgs = ["rustc", "cargo", "pkg-config", "openssl", "openssl.dev"]
+
+[phases.build]
+cmds = [
+  "cargo build --release"
+]
+
+[start]
+cmd = "./target/release/solar_analytics"
+
+[nixpacks]
+rust-version = "1.85"

@@ -20,19 +20,13 @@ COPY . .
 
 RUN cargo build --release
 
-FROM ubuntu:22.04
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 && \
-    rm -rf /var/lib/apt/lists/*
+# Option 2: Use a distroless image (uncomment to use instead of Alpine)
+FROM gcr.io/distroless/cc-debian12 AS distroless
 
 COPY --from=builder /app/target/release/solar_analytics /usr/local/bin/
 
-RUN useradd -m appuser
-USER appuser
-
 ENV RUST_LOG=info
 
+USER nonroot
 CMD ["solar_analytics"]
+

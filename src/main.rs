@@ -1,4 +1,4 @@
-use chrono::Timelike;
+use chrono::{Local, Timelike};
 use dotenv::dotenv;
 use reqwest::Client;
 use std::env;
@@ -8,9 +8,11 @@ use tokio::time::{Duration, sleep};
 mod models;
 mod solar_fetch;
 mod storage;
+mod utils;
 
 use solar_fetch::fetch_solar_data;
 use storage::{create_clickhouse_client, store_measurement};
+use utils::calculate_next_collection_time;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -31,26 +33,50 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let db_client = create_clickhouse_client(clickhouse_url, username, password, database);
 
-    log::info!("Starting solar data collection with synchronized timing at the top of each minute");
+    log::info!("Starting solar data collection at strict :05 and :35 second marks");
+
+    let mut next_collection = calculate_next_collection_time();
+    log::info!("First collection scheduled at: {}", next_collection);
 
     loop {
-        let now = chrono::Local::now();
+        let now = Local::now();
+        let wait_duration = (next_collection - now)
+            .to_std()
+            .unwrap_or(Duration::from_millis(10));
 
-        let seconds_to_next_minute = 60 - now.second() as u64;
-        let nanos_remaining = 1_000_000_000 - now.nanosecond() as u64;
-        let wait_duration =
-            Duration::from_secs(seconds_to_next_minute) - Duration::from_nanos(nanos_remaining);
+        if wait_duration > Duration::from_millis(100) {
+            sleep(wait_duration - Duration::from_millis(100)).await;
 
-        sleep(wait_duration).await;
+            loop {
+                let current = Local::now();
+                if current >= next_collection {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+
+        let actual_collection_time = Local::now();
+        log::debug!(
+            "Collection triggered at {:02}:{:02}:{:02}.{:03} (target: {:02}:{:02}:{:02})",
+            actual_collection_time.hour(),
+            actual_collection_time.minute(),
+            actual_collection_time.second(),
+            actual_collection_time.nanosecond() / 1_000_000,
+            next_collection.hour(),
+            next_collection.minute(),
+            next_collection.second()
+        );
+
+        next_collection = calculate_next_collection_time();
 
         match fetch_solar_data(&http_client, &url).await {
-            Ok((production, consumption)) => {
-                let timestamp = chrono::Utc::now();
-
+            Ok((timestamp, production, consumption)) => {
                 match store_measurement(&db_client, timestamp, production, consumption).await {
                     Ok(_) => {
                         log::info!(
-                            "Stored data: production: {}, consumption: {}",
+                            "Stored data with API timestamp {}: production: {}, consumption: {}",
+                            timestamp,
                             production,
                             consumption
                         );

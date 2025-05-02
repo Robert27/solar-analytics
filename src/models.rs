@@ -14,6 +14,8 @@ pub struct Inner801 {
 
 #[derive(Debug, Deserialize)]
 pub struct Data170 {
+    #[serde(rename = "100")]
+    pub timestamp: String,
     #[serde(rename = "101")]
     pub production: i64,
     #[serde(rename = "110")]
