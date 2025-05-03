@@ -13,5 +13,6 @@ serde_json = "1.0.140"
 dotenv = "0.15.0"
 clickhouse = "0.13.2"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10.3"
 refinery = "0.8.16"
 

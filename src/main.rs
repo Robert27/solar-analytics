@@ -72,7 +72,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         match fetch_solar_data(&http_client, &url).await {
             Ok((timestamp, pac, pdc, uac, udc, yield_day, cons_yield_day, cons_pac)) => {
-                match store_measurement(&db_client, timestamp, pac, pdc, uac, udc, yield_day, cons_yield_day, cons_pac).await {
+                match store_measurement(
+                    &db_client,
+                    timestamp,
+                    pac,
+                    pdc,
+                    uac,
+                    udc,
+                    yield_day,
+                    cons_yield_day,
+                    cons_pac,
+                )
+                .await
+                {
                     Ok(_) => {
                         log::info!(
                             "Stored data with API timestamp {}: pac: {}, consPac: {}",

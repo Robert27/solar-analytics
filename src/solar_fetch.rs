@@ -33,5 +33,14 @@ pub async fn fetch_solar_data(
     let cons_yield_day = parsed.inner.data.cons_yield_day;
     let cons_pac = parsed.inner.data.cons_pac;
 
-    Ok((timestamp, pac, pdc, uac, udc, yield_day, cons_yield_day, cons_pac))
+    Ok((
+        timestamp,
+        pac,
+        pdc,
+        uac,
+        udc,
+        yield_day,
+        cons_yield_day,
+        cons_pac,
+    ))
 }
