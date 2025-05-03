@@ -71,14 +71,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         next_collection = calculate_next_collection_time();
 
         match fetch_solar_data(&http_client, &url).await {
-            Ok((timestamp, production, consumption)) => {
-                match store_measurement(&db_client, timestamp, production, consumption).await {
+            Ok((timestamp, pac, pdc, uac, udc, yield_day, cons_yield_day, cons_pac)) => {
+                match store_measurement(&db_client, timestamp, pac, pdc, uac, udc, yield_day, cons_yield_day, cons_pac).await {
                     Ok(_) => {
                         log::info!(
-                            "Stored data with API timestamp {}: production: {}, consumption: {}",
+                            "Stored data with API timestamp {}: pac: {}, consPac: {}",
                             timestamp,
-                            production,
-                            consumption
+                            pac,
+                            cons_pac
                         );
                     }
                     Err(e) => log::error!("Failed to store data in database: {}", e),

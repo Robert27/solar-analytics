@@ -4,14 +4,24 @@ use std::error::Error;
 pub async fn store_measurement(
     db_client: &ClickhouseClient,
     timestamp: chrono::DateTime<chrono::Utc>,
-    production: i64,
-    consumption: i64,
+    pac: i64,
+    pdc: i64,
+    uac: i64,
+    udc: i64,
+    yield_day: i64,
+    cons_yield_day: i64,
+    cons_pac: i64,
 ) -> Result<(), Box<dyn Error>> {
     let query = format!(
-        "INSERT INTO measurements (timestamp, production, consumption) VALUES ('{}', {}, {})",
+        "INSERT INTO measurements (timestamp, pac, pdc, uac, udc, yieldDay, consYieldDay, consPac) VALUES ('{}', {}, {}, {}, {}, {}, {}, {})",
         timestamp.format("%Y-%m-%d %H:%M:%S"),
-        production,
-        consumption
+        pac,
+        pdc,
+        uac,
+        udc,
+        yield_day,
+        cons_yield_day,
+        cons_pac
     );
 
     db_client.query(&query).execute().await?;

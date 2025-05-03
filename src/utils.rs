@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDateTime, Timelike, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 
 pub fn calculate_next_collection_time() -> DateTime<Local> {
     let now = Local::now();
@@ -17,6 +17,9 @@ pub fn calculate_next_collection_time() -> DateTime<Local> {
 
 pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
     let naive_datetime = NaiveDateTime::parse_from_str(timestamp, "%d.%m.%y %H:%M:%S")?;
-
-    Ok(DateTime::from_naive_utc_and_offset(naive_datetime, Utc))
+    
+    let local_dt = Local.from_local_datetime(&naive_datetime).single()
+        .expect("ambiguous local datetime");
+    
+    Ok(local_dt.with_timezone(&Utc))
 }
